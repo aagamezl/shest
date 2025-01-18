@@ -31,9 +31,11 @@ HOME="${HOME:-$(getent passwd $USER 2>/dev/null | cut -d: -f6)}"
 HOME="${HOME:-$(eval echo ~$USER)}"
 
 # Define the target path
-SCRIPT_NAME="install.sh"
+SCRIPT_NAME="shest.sh"
 TARGET_PATH="/home/$USER/$SCRIPT_NAME"
-GITHUB_URL="https://raw.githubusercontent.com/aagamezl/experiments/master/shell/$SCRIPT_NAME"
+GITHUB_URL="https://raw.githubusercontent.com/aagamezl/shest/master/$SCRIPT_NAME"
+
+echo $GITHUB_URL
 
 # The [ -t 1 ] check only works when the function is not called from
 # a subshell (like in `$(...)` or `(...)`, so this hack redefines the

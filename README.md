@@ -9,7 +9,7 @@ To install `shest`, you can use the following command. It will check if the `she
 ### Installation Command:
 
 ```bash
-sh -c "$(curl -fsSL https://raw.githubusercontent.com/aagamezl/shest/master/shest.sh)"
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/aagamezl/shest/master/tools/install.sh)"
 ```
 
 ### What the Command Does
