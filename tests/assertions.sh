@@ -5,7 +5,7 @@ source /home/$USER/shest.sh
 
 describe "Testing Assertions" <<'TEST'
   test "Testing toBeEqual" <<'SUITE'
-    toBeEqual "hello" "hello"
+    toBeEqual "hello" "hello1"
     toBeEqual 1 1
   SUITE
 
