@@ -154,3 +154,12 @@ Test Suites:    0 failed, 5 passed, 5 total
 Tests:          0 failed, 7 passed, 7 total
 Time:           0.01 s
 ```
+
+
+## Roadmap
+
+* **afterAll**: Runs a function after all the tests.
+* **afterEach**: Runs a function after each one of the tests in this file completes.
+* **beforeAll**: Runs a function before any of the tests in this file run.
+* **beforeEach**: Runs a function before each of the tests in this file runs.
+* **Test Report**: Improve test reports (including errors).
