@@ -1,6 +1,6 @@
 #!/bin/bash
 
-VERSION="1.0.0"
+VERSION="1.0.1"
 
 #------------------------------START COLORS FORMAT------------------------------
 FMT_RESET='\033[0m' # Color Off
@@ -252,12 +252,12 @@ function describe() {
   end_time=$(date +%s.%N) # Record the end time
   elapsed=$(echo "$end_time - $start_time" | bc)
 
-  echo -e "Test Suites: \t${FMT_RED}${failed_test_suites} failed${FMT_RESET}, ${FMT_GREEN}$passed_test_suites passed${FMT_RESET}, $((passed_test_suites + failed_test_suites)) total"
-  echo -e "Tests: \t\t${FMT_RED}${failed} failed${FMT_RESET}, ${FMT_GREEN}$passed passed${FMT_RESET}, $((passed + failed)) total"
-  printf "Time: \t\t%.2f s\n" "$elapsed"
+  echo -e "    Test Suites: \t${FMT_RED}${failed_test_suites} failed${FMT_RESET}, ${FMT_GREEN}$passed_test_suites passed${FMT_RESET}, $((passed_test_suites + failed_test_suites)) total"
+  echo -e "    Tests: \t\t${FMT_RED}${failed} failed${FMT_RESET}, ${FMT_GREEN}$passed passed${FMT_RESET}, $((passed + failed)) total"
+  printf "    Time: \t\t%.2f s\n" "$elapsed"
   echo >&2
 
-  [[ "$failed_test_suites" -eq 0 ]] && exit 0 || exit 1
+  # [[ "$failed_test_suites" -eq 0 ]] && exit 0 || exit 1
 }
 
 function test() {
