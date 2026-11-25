@@ -1,284 +1,194 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-VERSION="1.0.1"
+SHEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SHEST_DIR}/utils/colors.sh"
 
-#------------------------------START COLORS FORMAT------------------------------
-FMT_RESET='\033[0m' # Color Off
-FMT_BLUE='\033[34m'
-FMT_BOLD='\033[1m'
-FMT_CYAN='\033[0;36m'
-FMT_GREEN='\033[0;32m'
-FMT_RED='\033[0;31m'
-#-------------------------------END COLORS FORMAT-------------------------------
+readonly EXIT_SUCCESS=0
+readonly EXIT_FAILURE=1
+readonly FIRST_TEST_INDEX=0
+readonly INDEX_STEP=1
+readonly INITIAL_FAILURE_COUNT=0
+readonly TEST_FUNCTION_PREFIX='__test_'
+readonly OUTPUT_INDENT='    '
+readonly SINGLE_QUOTE="'"
+readonly BEFORE_EACH_PATTERN='^@before_each[[:space:]]*\{[[:space:]]*$'
+readonly AFTER_EACH_PATTERN='^@after_each[[:space:]]*\{[[:space:]]*$'
+readonly BEFORE_ALL_PATTERN='^@before_all[[:space:]]*\{[[:space:]]*$'
+readonly AFTER_ALL_PATTERN='^@after_all[[:space:]]*\{[[:space:]]*$'
+readonly TEST_DECLARATION_PATTERN="^@test[[:space:]]+[\"${SINGLE_QUOTE}](.*)[\"${SINGLE_QUOTE}][[:space:]]*\{[[:space:]]*\$"
 
-#---------------------------START UTILITIES UTILITIES---------------------------
-#----------------------------END UTILITIES UTILITIES----------------------------
+TEST_NAMES=()
 
-#---------------------------START ASSERTION UTILITIES---------------------------
-function toBeEqual() {
-  local expected=$1
-  local received=$2
+to_be() {
+  local actual="$1"
+  local expected="$2"
 
-  if [[ "$received" == "$expected" ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} ${FUNCNAME}: Expected: '${FMT_GREEN}$expected${FMT_RESET}', Received: '${FMT_RED}$received${FMT_RESET}'" >&2
-
-    echo 0
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Expected: $expected"
+    echo "Received: $actual"
+    return "$EXIT_FAILURE"
   fi
 }
 
-function toBeNotEqual() {
-  local expected=$1
-  local received=$2
+to_not_be_equal() {
+  local actual="$1"
+  local expected="$2"
 
-  if [[ "$received" != "$expected" ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} ${FUNCNAME}: Expected: '${FMT_GREEN}$expected${FMT_RESET}', Received: '${FMT_RED}$received${FMT_RESET}'" >&2
-
-    echo 0
+  if [[ "$actual" == "$expected" ]]; then
+    echo "Expected: $expected"
+    echo "Received: $actual"
+    return "$EXIT_FAILURE"
   fi
 }
 
-function toBeTrue() {
-  local received=$1
+__before_each() { :; }
+__after_each() { :; }
+__before_all() { :; }
+__after_all() { :; }
 
-  if [[ $received == true ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
+expect() {
+  local actual="$1"
+  local matcher="$2"
+  shift 2
 
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected ${FMT_RED}$received${FMT_RESET} to be true" >&2
-
-    echo 0
-  fi
+  "$matcher" "$actual" "$@"
 }
 
-function toBeFalse() {
-  local received=$1
+preprocess() {
+  local source_file="$1"
+  local line
+  local index="$FIRST_TEST_INDEX"
 
-  if [[ $received == false ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected ${FMT_RED}$received${FMT_RESET} to be false" >&2
-
-    echo 0
-  fi
-}
-
-function toContain() {
-  local expected=$1
-  local received=$2
-
-  if [[ $expected == *"$received"* ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '${FMT_GREEN}$expected${FMT_RESET}' to contain '${FMT_RED}$received${FMT_RESET}'" >&2
-
-    echo 0
-  fi
-}
-
-function toNotContain() {
-  local expected=$1
-  local received=$2
-
-  if [[ $expected != *"$received"* ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '${FMT_GREEN}$expected${FMT_RESET}' to not contain '${FMT_RED}$received${FMT_RESET}'" >&2
-
-    echo 0
-  fi
-}
-
-function toStartWith() {
-  local expected=$1
-  local received=$2
-
-  if [[ "$expected" == "$received"* ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '${FMT_GREEN}$expected${FMT_RESET}' to start with '${FMT_RED}$received${FMT_RESET}'" >&2
-
-    echo 0
-  fi
-}
-
-function toEndWith() {
-  local expected=$1
-  local received=$2
-
-  if [[ "$expected" == *"$received" ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '${FMT_GREEN}$expected${FMT_RESET}' to end with '${FMT_RED}$received${FMT_RESET}'" >&2
-
-    echo 0
-  fi
-}
-
-function toMatchRegex() {
-  local expected=$1
-  local received=$2
-
-  if [[ "$expected" =~ $received ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} toMatchRegex: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '${FMT_GREEN}$expected${FMT_RESET}' to match regex '${FMT_RED}$received${FMT_RESET}'" >&2
-
-    echo 0
-  fi
-}
-
-function toExist() {
-  local received=$1
-
-  if [[ -e $received ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} $FUNCNAME: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '${FMT_RED}$received${FMT_RESET}' to exist" >&2
-
-    echo 0
-  fi
-}
-
-function toBeFile() {
-  if [[ -f "$1" ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} toBeFile: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '$1' to be a file" >&2
-
-    echo 0
-  fi
-}
-
-function toBeDirectory() {
-  if [[ -d "$1" ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} toBeDirectory: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '$1' to be a directory" >&2
-
-    echo 0
-  fi
-}
-
-function toBeGreaterThan() {
-  if [[ "$1" -gt "$2" ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} toBeGreaterThan: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '$1' to be greater than '$2'" >&2
-
-    echo 0
-  fi
-}
-
-function toBeLessThan() {
-  if [[ "$1" -lt "$2" ]]; then
-    echo -e "    ${FMT_GREEN}✓${FMT_RESET} toBeLessThan: Passed" >&2
-
-    echo 1
-  else
-    echo -e "    ${FMT_RED}✗${FMT_RESET} $FUNCNAME: Expected '$1' to be less than '$2'" >&2
-
-    echo 0
-  fi
-}
-#----------------------------END ASSERTION UTILITIES----------------------------
-
-#----------------------------START TESTING FUNCTIONS----------------------------
-function describe() {
-  local describe_name=$1
-  local passed=0
-  local failed=0
-  local test_block
-  local test_result
-  local passed_test_suites=0
-  local failed_test_suites=0
-  local start_time=0
-  local end_time=0
-  local elapsed=0
-
-  echo -e "${FMT_CYAN}• $describe_name${FMT_RESET}"
-
-  start_time=$(date +%s.%N) # Record the start time
-
-  # Read lines from stdin (HereDoc content)
   while IFS= read -r line; do
-    test_block+=$line$'\n'
-  done
-
-  test_block=$(echo "$test_block" | sed 's/^  //')
-  test_result=$(eval "$test_block")
-
-  IFS=',' read -a array <<<"$test_result"
-
-  for ((i = 0; i < ${#array[@]}; i += 2)); do
-    passed=$((passed + array[i]))
-    failed=$((failed + array[i + 1]))
-
-    if [[ ${array[i + 1]} == 0 ]]; then
-      passed_test_suites=$((passed_test_suites + 1))
+    if [[ $line =~ $TEST_DECLARATION_PATTERN ]]; then
+      TEST_NAMES+=("${BASH_REMATCH[1]}")
+      echo "${TEST_FUNCTION_PREFIX}${index}() {"
+      index=$((index + INDEX_STEP))
+    elif [[ $line =~ $BEFORE_EACH_PATTERN ]]; then
+      echo "__before_each() {"
+    elif [[ $line =~ $BEFORE_ALL_PATTERN ]]; then
+      echo "__before_all() {"
+    elif [[ $line =~ $AFTER_ALL_PATTERN ]]; then
+      echo "__after_all() {"
+    elif [[ $line =~ $AFTER_EACH_PATTERN ]]; then
+      echo "__after_each() {"
     else
-      failed_test_suites=$((failed_test_suites + 1))
+      echo "$line"
+    fi
+  done < "$source_file"
+}
+
+run_tests() {
+  local test_file="$1"
+  local processed_file
+  processed_file="$(mktemp)"
+
+  preprocess "$test_file" > "$processed_file"
+  source "$processed_file"
+  rm -f "$processed_file"
+
+  local failure_count="$INITIAL_FAILURE_COUNT"
+  local index
+  local output
+  local status
+
+  __before_all
+
+  for index in "${!TEST_NAMES[@]}"; do
+    output="$( ( set -e; trap __after_each EXIT; __before_each; "${TEST_FUNCTION_PREFIX}${index}" ) 2>&1 )"
+    status=$?
+
+    if [[ $status -eq $EXIT_SUCCESS ]]; then
+      echo "${C_GREEN}✓${C_RESET} ${TEST_NAMES[$index]}"
+      [[ -n $output ]] && echo "$output" | sed "s/^/${OUTPUT_INDENT}/"
+    else
+      echo "${C_RED}✗${C_RESET} ${TEST_NAMES[$index]}"
+      echo "$output" | sed "s/^/${OUTPUT_INDENT}/"
+      failure_count=$((failure_count + INDEX_STEP))
     fi
   done
 
-  end_time=$(date +%s.%N) # Record the end time
-  elapsed=$(echo "$end_time - $start_time" | bc)
+  __after_all
 
-  echo -e "    Test Suites: \t${FMT_RED}${failed_test_suites} failed${FMT_RESET}, ${FMT_GREEN}$passed_test_suites passed${FMT_RESET}, $((passed_test_suites + failed_test_suites)) total"
-  echo -e "    Tests: \t\t${FMT_RED}${failed} failed${FMT_RESET}, ${FMT_GREEN}$passed passed${FMT_RESET}, $((passed + failed)) total"
-  printf "    Time: \t\t%.2f s\n" "$elapsed"
-  echo >&2
+  echo
+  local passed=$(( ${#TEST_NAMES[@]} - failure_count ))
+  local failed_color="$C_GREEN"
+  [[ $failure_count -gt $INITIAL_FAILURE_COUNT ]] && failed_color="$C_RED"
+  echo "${C_BOLD}${#TEST_NAMES[@]} tests${C_RESET}, ${C_GREEN}${passed} passed${C_RESET}, ${failed_color}${failure_count} failed${C_RESET}"
 
-  # [[ "$failed_test_suites" -eq 0 ]] && exit 0 || exit 1
+  if [[ $failure_count -gt $INITIAL_FAILURE_COUNT ]]; then
+    return "$EXIT_FAILURE"
+  fi
 }
 
-function test() {
-  local test_name=$1
-  local passed=0
-  local failed=0
-  local assertion_result
+run_tests "$1"
 
-  echo -e "  ${FMT_YELLOW}$test_name${FMT_RESET}" >&2
+# #!/usr/bin/env bash
 
-  while IFS= read -r line; do
-    assertion_result=$(eval "$line")
+# readonly EXIT_SUCCESS=0
+# readonly EXIT_FAILURE=1
+# readonly INITIAL_COUNT=0
+# readonly COUNT_STEP=1
+# readonly OUTPUT_INDENT='    '
+# readonly TEST_FUNCTION_PREFIX='__test_'
+# readonly TEST_REWRITE_PROGRAM='
+# /^@test +\047.*\047 *\{$/ {
+#   name = $0
+#   sub(/^@test +\047/, "", name)
+#   sub(/\047 *\{$/, "", name)
+#   printf "TEST_NAMES[%d]=\047%s\047\n%s%d() {\n", count, name, prefix, count
+#   count++
+#   next
+# }
+# { print }
+# '
 
-    if [[ $assertion_result == 1 ]]; then
-      passed=$((passed + 1))
-    else
-      failed=$((failed + 1))
-    fi
-  done
+# TEST_NAMES=()
 
-  echo >&2
-  echo -n "$passed,$failed,"
-}
-#-----------------------------END TESTING FUNCTIONS-----------------------------
+# toBe() {
+#   if [[ "$1" != "$2" ]]; then
+#     echo "Expected: $2"
+#     echo "Received: $1"
+#     return "$EXIT_FAILURE"
+#   fi
+# }
+
+# expect() {
+#   local actual="$1"
+#   local matcher="$2"
+#   shift 2
+
+#   "$matcher" "$actual" "$@"
+# }
+
+# run_tests() {
+#   local test_file="$1"
+#   local failure_count="$INITIAL_COUNT"
+#   local index
+#   local output
+#   local status
+
+#   eval "$(awk -v prefix="$TEST_FUNCTION_PREFIX" "$TEST_REWRITE_PROGRAM" "$test_file")"
+
+#   for index in "${!TEST_NAMES[@]}"; do
+#     output="$( ( set -e; "${TEST_FUNCTION_PREFIX}${index}" ) 2>&1 )"
+#     status=$?
+
+#     if [[ $status -eq $EXIT_SUCCESS ]]; then
+#       echo "✓ ${TEST_NAMES[$index]}"
+#     else
+#       echo "✗ ${TEST_NAMES[$index]}"
+#       echo "$output" | sed "s/^/${OUTPUT_INDENT}/"
+#       failure_count=$((failure_count + COUNT_STEP))
+#     fi
+#   done
+
+#   echo
+#   echo "${#TEST_NAMES[@]} tests, ${failure_count} failed"
+
+#   if [[ $failure_count -gt $INITIAL_COUNT ]]; then
+#     return "$EXIT_FAILURE"
+#   fi
+# }
+
+# run_tests "$1"
