@@ -26,9 +26,9 @@ USER=${USER:-$(id -u -n)}
 # $HOME is defined at the time of login, but it could be unset. If it is unset,
 # a tilde by itself (~) will not be expanded to the current user's home directory.
 # POSIX: https://pubs.opengroup.org/onlinepubs/009696899/basedefs/xbd_chap08.html#tag_08_03
-HOME="${HOME:-$(getent passwd $USER 2>/dev/null | cut -d: -f6)}"
+HOME="${HOME:-$(getent passwd "$USER" 2>/dev/null | cut -d: -f6)}"
 # macOS does not have getent, but this works even if $HOME is unset
-HOME="${HOME:-$(eval echo ~$USER)}"
+HOME="${HOME:-$(eval echo ~"$USER")}"
 
 # Define the target path
 SCRIPT_NAME="shest.sh"
@@ -80,18 +80,18 @@ supports_hyperlinks() {
 
   # VTE-based terminals above v0.50 (Gnome Terminal, Guake, ROXTerm, etc)
   if [ -n "$VTE_VERSION" ]; then
-    [ $VTE_VERSION -ge 5000 ]
+    [ "$VTE_VERSION" -ge 5000 ]
     return $?
   fi
 
   # If $TERM_PROGRAM is set, these terminals support hyperlinks
   case "$TERM_PROGRAM" in
-  Hyper | iTerm.app | terminology | WezTerm | vscode) return 0 ;;
+    Hyper | iTerm.app | terminology | WezTerm | vscode) return 0 ;;
   esac
 
   # These termcap entries support hyperlinks
   case "$TERM" in
-  xterm-kitty | alacritty | alacritty-direct) return 0 ;;
+    xterm-kitty | alacritty | alacritty-direct) return 0 ;;
   esac
 
   # xfce4-terminal supports hyperlinks
@@ -115,8 +115,8 @@ fmt_link() {
   fi
 
   case "$3" in
-  --text) printf '%s\n' "$1" ;;
-  --url | *) fmt_underline "$2" ;;
+    --text) printf '%s\n' "$1" ;;
+    --url | *) fmt_underline "$2" ;;
   esac
 }
 
@@ -156,9 +156,7 @@ print_success() {
 
 install_script() {
   # Download the script and save it to /home/$USER
-  curl -fsSL "$GITHUB_URL" -o "$TARGET_PATH"
-
-  if [ $? -eq 0 ]; then
+  if curl -fsSL "$GITHUB_URL" -o "$TARGET_PATH"; then
     print_success
 
     exit 0
@@ -180,10 +178,10 @@ if [ -f "$TARGET_PATH" ]; then
     echo "${FMT_CYAN}A new version of ${FMT_RESET}${FMT_YELLOW}$SCRIPT_NAME${FMT_RESET} ${FMT_CYAN}($VERSION -> $INSTALLED_VERSION) exists${FMT_RESET}"
 
     printf "Do you want to upgrade? (Y/N): "
-    read confirm
+    read -r confirm
     case "$confirm" in
-    [yY] | [yY][eE][sS]) : ;;
-    *) exit 1 ;;
+      [yY] | [yY][eE][sS]) : ;;
+      *) exit 1 ;;
     esac
 
     install_script

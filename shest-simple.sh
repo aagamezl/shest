@@ -30,13 +30,13 @@ expect() {
   echo "expected: $expected"
 
   case "$matcher" in
-  toBe)
-    [[ "$actual" == "$expected" ]]
-    ;;
-  *)
-    echo "Unknown matcher: $matcher" >&2
-    return 1
-    ;;
+    toBe)
+      [[ "$actual" == "$expected" ]]
+      ;;
+    *)
+      echo "Unknown matcher: $matcher" >&2
+      return 1
+      ;;
   esac
 }
 

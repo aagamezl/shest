@@ -1,4 +1,4 @@
-SHELL_FILES := $(shell git ls-files --cached --others --exclude-standard '*.sh')
+SHELL_FILES := $(wildcard $(shell git ls-files --cached --others --exclude-standard '*.sh'))
 
 .PHONY: check lint syntax fmt fmt-check hooks
 

@@ -1,5 +1,4 @@
-# Raw ANSI codes, always defined. Interactive components (utils/theme.sh) draw
-# on a tty that may not be stdout, so they use these and apply their own gate.
+# Raw ANSI codes, always defined.
 C_ANSI_RESET=$'\033[0m'
 C_ANSI_BOLD=$'\033[1m'
 C_ANSI_DIM=$'\033[2m'
