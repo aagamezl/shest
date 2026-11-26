@@ -1,4 +1,4 @@
-source ./sum.sh
+source "$(dirname "${BASH_SOURCE[0]}")/arithmetic.sh"
 
 # shellcheck disable=SC2034
 readonly FIRST_ADDEND=1
@@ -32,4 +32,12 @@ test_adds_1_2_to_equal_3() {
 # @test adds 1 + 3 to not be equal 3
 test_adds_1_3_to_not_be_equal_3() {
   expect "$(sum "1" "3")" not_to_be "3"
+}
+
+# @test divide by zero fails
+test_divide_by_zero() {
+  if divide 1 0 2>/dev/null; then
+    echo "should have failed"
+    return 1
+  fi
 }

@@ -1,4 +1,4 @@
-source "$(dirname "${BASH_SOURCE[0]}")/../../../sum.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/../../arithmetic.sh"
 
 # shellcheck disable=SC2034
 readonly FIRST_ADDEND=1

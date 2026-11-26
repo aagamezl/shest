@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-source ./sum.sh
+source "$(dirname "${BASH_SOURCE[0]}")/arithmetic.sh"
 # Intentionally failing tests, to eyeball the failure output of each matcher.
 # Run: bash shest.sh failing.test.sh
 

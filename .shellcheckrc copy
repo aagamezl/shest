@@ -1,5 +1,0 @@
-shell=bash
-external-sources=true
-source-path=SCRIPTDIR
-# Library variables (e.g. colors) are consumed by sourcing scripts
-disable=SC2034
