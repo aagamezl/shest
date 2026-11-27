@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # shellcheck source=/dev/null
-source /home/$USER/shest.sh
+source "/home/$USER/shest.sh"
 
 describe "Testing Assertions" <<'TEST'
   test "Testing toBeEqual" <<'SUITE'

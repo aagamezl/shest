@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  check:
+    name: Lint and format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shfmt
+        run: sudo apt-get update && sudo apt-get install -y shfmt
+
+      # bash -n, shellcheck (preinstalled on ubuntu-latest) and shfmt
+      - name: make check
+        run: make check
+
+  test:
+    name: Tests on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # macOS ships bash 3.2, the oldest bash shest supports.
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash version
+        run: bash --version | head -n 1
+
+      # shest tests itself.
+      - name: make test
+        run: make test
+
+      - name: JUnit report
+        if: always()
+        run: ./shest tests --reporter junit --output-file reports/junit.xml || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-${{ matrix.os }}
+          path: reports/junit.xml

@@ -1,0 +1,20 @@
+# shest output
+coverage/
+report.xml
+junit.xml
+*.tap
+reports/
+
+# shfmt / editors leave these behind
+*.orig
+*.swp
+*~
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Local scratch files
+tmp/
+*.log
