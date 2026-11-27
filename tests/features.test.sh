@@ -42,7 +42,7 @@ test_parallel() {
   expect "$STATUS" to_be 1
   expect "$OUTPUT" to_contain "Test Files:  1 failed, 2 passed, 3 total"
   expect "$OUTPUT" to_contain "Tests:       1 failed, 3 passed, 4 total"
-  expect "$(printf '%s\n' "$OUTPUT" | grep '━━' | tr '\n' ' ')" to_match 'a\.test\.sh.*b\.test\.sh.*c\.test\.sh'
+  expect "$(printf '%s\n' "$OUTPUT" | grep -a '━━' | tr '\n' ' ')" to_match 'a\.test\.sh.*b\.test\.sh.*c\.test\.sh'
 }
 
 # @test --parallel runs files at the same time
