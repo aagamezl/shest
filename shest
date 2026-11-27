@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Resolve symlinks (e.g. ~/.local/bin/shest -> ~/.shest/shest.sh) so utils/ is found next to the real script.
+# Resolve symlinks (e.g. ~/.local/bin/shest -> ~/.shest/shest) so utils/ is found next to the real script.
 SHEST_SOURCE="${BASH_SOURCE[0]}"
 while [[ -L $SHEST_SOURCE ]]; do
   SHEST_LINK_DIR="$(cd "$(dirname "$SHEST_SOURCE")" && pwd)"
@@ -17,7 +17,8 @@ readonly EXIT_SUCCESS=0
 readonly EXIT_FAILURE=1
 readonly INITIAL_FAILURE_COUNT=0
 readonly OUTPUT_INDENT='    '
-readonly TEST_ANNOTATION_PATTERN='^#[[:space:]]*@test(\.only|\.skip)?[[:space:]]+(.+)$'
+readonly TEST_ANNOTATION_PATTERN='^#[[:space:]]*@test(\.only|\.skip|\.todo)?[[:space:]]+(.+)$'
+readonly TIMEOUT_ANNOTATION_PATTERN='^#[[:space:]]*@timeout[[:space:]]+([0-9]+(\.[0-9]+)?)[[:space:]]*$'
 readonly TEST_FILE_NAME_PATTERN='*.test.sh'
 readonly DEFAULT_TEST_PATH='.'
 readonly ALL_FILES_LABEL='All files'
@@ -30,6 +31,7 @@ readonly FUNCTION_DECLARATION_PATTERN='^(function[[:space:]]+)?([A-Za-z_][A-Za-z
 TEST_NAMES=()
 TEST_FUNCTIONS=()
 TEST_MODES=()
+TEST_TIMEOUTS=()
 NAME_FILTER=''
 COVERAGE=false
 BAIL=false
@@ -41,6 +43,14 @@ COVERAGE_THRESHOLD=''
 TEST_MATCH=()
 TEST_PATH_IGNORE_PATTERNS=()
 COVERAGE_PATH_IGNORE_PATTERNS=()
+TEST_TIMEOUT=0
+PARALLEL=1
+CHANGED=false
+LIST=false
+WATCH=false
+INIT=false
+COVERAGE_REPORTERS=(text)
+COVERAGE_DIRECTORY=coverage
 
 # shellcheck disable=SC2016  # awk program, no shell expansion wanted
 readonly COVERAGE_AWK_PROGRAM='
@@ -49,6 +59,8 @@ readonly COVERAGE_AWK_PROGRAM='
 function finalize(   ) {
   if (g_exec) {
     total++
+    exec_line[total] = g_start
+    exec_hit[total] = g_hit ? 1 : 0
     if (g_hit) { covered++ } else { miss[++missing] = g_start }
   }
 }
@@ -92,6 +104,10 @@ NR == FNR { hit[$1] = 1; next }
 }
 END {
   finalize()
+  if (detail) {
+    for (i = 1; i <= total; i++) print exec_line[i], exec_hit[i]
+    exit
+  }
   ranges = ""
   for (i = 1; i <= missing; i++) {
     start = miss[i]; stop = start
@@ -101,6 +117,23 @@ END {
   print total + 0, covered + 0, ranges
 }
 '
+
+# Numeric comparison (supports decimals): __compare <a> <operator> <b>
+__compare() {
+  awk -v a="$1" -v b="$3" "BEGIN { exit !(a $2 b) }"
+}
+
+__assert_compare() {
+  local actual="$1"
+  local operator="$2"
+  local expected="$3"
+  local description="$4"
+
+  if ! __compare "$actual" "$operator" "$expected"; then
+    echo "Expected: ${actual} ${description} ${expected}"
+    return "$EXIT_FAILURE"
+  fi
+}
 
 to_be() {
   local actual="$1"
@@ -120,23 +153,6 @@ not_to_be() {
   if [[ "$actual" == "$expected" ]]; then
     echo "Expected: $expected"
     echo "Received: $actual"
-    return "$EXIT_FAILURE"
-  fi
-}
-
-# Numeric comparison (supports decimals): __compare <a> <operator> <b>
-__compare() {
-  awk -v a="$1" -v b="$3" "BEGIN { exit !(a $2 b) }"
-}
-
-__assert_compare() {
-  local actual="$1"
-  local operator="$2"
-  local expected="$3"
-  local description="$4"
-
-  if ! __compare "$actual" "$operator" "$expected"; then
-    echo "Expected: ${actual} ${description} ${expected}"
     return "$EXIT_FAILURE"
   fi
 }
@@ -190,6 +206,70 @@ to_contain_item() {
   fi
 }
 
+# Empty string: expect "$value" to_be_empty
+to_be_empty() {
+  if [[ -n "$1" ]]; then
+    echo "Expected: to be empty"
+    echo "Received: $1"
+    return "$EXIT_FAILURE"
+  fi
+}
+
+# Prefix / suffix match: expect "$text" to_start_with 'foo'
+to_start_with() {
+  if [[ "$1" != "$2"* ]]; then
+    echo "Expected: to start with $2"
+    echo "Received: $1"
+    return "$EXIT_FAILURE"
+  fi
+}
+
+to_end_with() {
+  if [[ "$1" != *"$2" ]]; then
+    echo "Expected: to end with $2"
+    echo "Received: $1"
+    return "$EXIT_FAILURE"
+  fi
+}
+
+# Number of characters: expect "$text" to_have_length 5
+to_have_length() {
+  if [[ ${#1} -ne $2 ]]; then
+    echo "Expected: length ${2}"
+    echo "Received: length ${#1} (${1})"
+    return "$EXIT_FAILURE"
+  fi
+}
+
+# Number of items in a newline-separated list (an empty list has 0 items):
+#   expect "$(printf '%s\n' "${items[@]}")" to_have_count 3
+to_have_count() {
+  local count=0
+
+  if [[ -n "$1" ]]; then
+    count="$(printf '%s\n' "$1" | wc -l | tr -d ' ')"
+  fi
+  if [[ $count -ne $2 ]]; then
+    echo "Expected: ${2} item(s)"
+    echo "Received: ${count} item(s)"
+    return "$EXIT_FAILURE"
+  fi
+}
+
+# Exit code of a command line (run with eval in a subshell, output discarded):
+#   expect "grep -q foo file.txt" to_exit_with 1
+to_exit_with() {
+  local code
+
+  code=0
+  (eval "$1") >/dev/null 2>&1 || code=$?
+  if [[ $code -ne $2 ]]; then
+    echo "Expected: exit code ${2}"
+    echo "Received: exit code ${code} (${1})"
+    return "$EXIT_FAILURE"
+  fi
+}
+
 # Default no-op hooks; a test file overrides them by defining functions
 # with the same names.
 before_each() { :; }
@@ -197,16 +277,31 @@ after_each() { :; }
 before_all() { :; }
 after_all() { :; }
 
+# expect <actual> [not] <matcher> [expected]
+# "not" inverts any matcher: expect "$text" not to_contain 'foo'
 expect() {
   local actual="$1"
   local matcher="$2"
   shift 2
 
+  if [[ $matcher == not ]]; then
+    matcher="${1:-}"
+    shift
+    if "$matcher" "$actual" "$@" >/dev/null 2>&1; then
+      echo "Expected: not ${matcher//_/ } ${*}"
+      echo "Received: ${actual}"
+      return "$EXIT_FAILURE"
+    fi
+    return "$EXIT_SUCCESS"
+  fi
+
   "$matcher" "$actual" "$@"
 }
 
-# Collect "# @test[.only|.skip] <name>" annotations and the function declared
-# right after each one.
+# Collect "# @test[.only|.skip|.todo] <name>" annotations and the function
+# declared right after each one. An optional "# @timeout <seconds>" line goes
+# right before the annotation or between it and the function. A .todo test
+# needs no function.
 discover_tests() {
   local source_file="$1"
   local line
@@ -214,15 +309,27 @@ discover_tests() {
   local pending_name=''
   local pending_mode='run'
   local pending_line=0
+  local pending_timeout=''
+  local queued_timeout=''
 
   while IFS= read -r line; do
     line_number=$((line_number + 1))
+
+    if [[ $line =~ $TIMEOUT_ANNOTATION_PATTERN ]]; then
+      if [[ -n $pending_name ]]; then
+        pending_timeout="${BASH_REMATCH[1]}"
+      else
+        queued_timeout="${BASH_REMATCH[1]}"
+      fi
+      continue
+    fi
 
     if [[ -n $pending_name ]]; then
       if [[ $line =~ $FUNCTION_DECLARATION_PATTERN ]]; then
         TEST_NAMES+=("$pending_name")
         TEST_FUNCTIONS+=("${BASH_REMATCH[2]}")
         TEST_MODES+=("$pending_mode")
+        TEST_TIMEOUTS+=("$pending_timeout")
         pending_name=''
         continue
       fi
@@ -235,6 +342,15 @@ discover_tests() {
       pending_mode="${pending_mode:-run}"
       pending_name="${BASH_REMATCH[2]}"
       pending_line=$line_number
+      pending_timeout="$queued_timeout"
+      queued_timeout=''
+      if [[ $pending_mode == todo ]]; then
+        TEST_NAMES+=("$pending_name")
+        TEST_FUNCTIONS+=('')
+        TEST_MODES+=(todo)
+        TEST_TIMEOUTS+=('')
+        pending_name=''
+      fi
     fi
   done <"$source_file"
 
@@ -244,13 +360,16 @@ discover_tests() {
   fi
 }
 
-# Jest-style counts: "2 skipped, 1 failed, 551 passed, 552 total" (zero failed/skipped are omitted).
+# Jest-style counts: "2 skipped, 1 todo, 1 failed, 551 passed, 552 total" (zero failed/skipped are omitted).
 format_counts() {
-  local total="$1" passed="$2" failed="$3" skipped="$4"
+  local total="$1" passed="$2" failed="$3" skipped="$4" todo="${5:-0}"
   local parts=()
 
   if [[ $skipped -gt 0 ]]; then
     parts+=("${C_YELLOW}${skipped} skipped${C_RESET}")
+  fi
+  if [[ $todo -gt 0 ]]; then
+    parts+=("${C_CYAN}${todo} todo${C_RESET}")
   fi
   if [[ $failed -gt 0 ]]; then
     parts+=("${C_RED}${failed} failed${C_RESET}")
@@ -293,7 +412,7 @@ is_skipped() {
   local index="$1"
   local has_only="$2"
 
-  if [[ ${TEST_MODES[$index]} == skip ]]; then
+  if [[ ${TEST_MODES[$index]} == skip || ${TEST_MODES[$index]} == todo ]]; then
     return 0
   fi
   if [[ $has_only == true && ${TEST_MODES[$index]} != only ]]; then
@@ -305,8 +424,71 @@ is_skipped() {
   return 1
 }
 
+# Run one test in a subshell and set TEST_OUTPUT and TEST_STATUS. A test that
+# outlives its timeout (its "# @timeout", else SHEST_TEST_TIMEOUT) is killed.
+execute_test() {
+  local index="$1"
+  local limit="${TEST_TIMEOUTS[$index]:-}"
+  limit="${limit:-${SHEST_TEST_TIMEOUT:-0}}"
+
+  if [[ $limit == 0 ]] || ! __compare "$limit" '>' 0; then
+    TEST_OUTPUT="$( (
+      set -e
+      trap after_each EXIT
+      before_each
+      "${TEST_FUNCTIONS[$index]}"
+    ) 2>&1)"
+    TEST_STATUS=$?
+    return 0
+  fi
+
+  local out_file flag pid watcher
+  out_file="$(mktemp)"
+  flag="$(mktemp)"
+  rm -f "$flag"
+
+  (
+    set -e
+    trap after_each EXIT
+    before_each
+    "${TEST_FUNCTIONS[$index]}"
+  ) >"$out_file" 2>&1 &
+  pid=$!
+  (
+    trap 'kill "$sleeper" 2>/dev/null; exit 0' TERM
+    sleep "$limit" &
+    sleeper=$!
+    wait "$sleeper"
+    : >"$flag"
+    # TERM first, then the children it is waiting on, so its EXIT trap (after_each) still runs.
+    kill -TERM "$pid" 2>/dev/null
+    pkill -P "$pid" 2>/dev/null
+  ) &
+  watcher=$!
+
+  {
+    wait "$pid"
+    TEST_STATUS=$?
+  } 2>/dev/null
+  kill "$watcher" 2>/dev/null
+  {
+    wait "$watcher"
+  } 2>/dev/null
+
+  if [[ -e $flag ]]; then
+    TEST_STATUS=124
+    # Drop bash's "Terminated" notices for the processes the timeout killed.
+    TEST_OUTPUT="$(sed -E '/: [0-9]+ (Terminated|Killed)/d' "$out_file")"
+    TEST_OUTPUT+="${TEST_OUTPUT:+$'\n'}Timed out after ${limit}s"
+  else
+    TEST_OUTPUT="$(cat "$out_file")"
+  fi
+  rm -f "$out_file" "$flag"
+  return 0
+}
+
 # Run one test file in this process. When SHEST_RESULTS_FILE is set, append
-# "<passed> <failed> <skipped>" to it instead of printing a summary.
+# "<passed> <failed> <skipped> <todo>" to it instead of printing a summary.
 run_tests() {
   local test_file="$1"
 
@@ -314,12 +496,23 @@ run_tests() {
   if [[ -n ${SHEST_COVERAGE_FILE:-} ]]; then
     enable_coverage
   fi
+  # A file with a syntax error fails instead of silently running nothing.
+  local syntax_errors
+  if ! syntax_errors="$(bash -n "$test_file" 2>&1)"; then
+    echo "$syntax_errors"
+    echo "${C_RED}✗${C_RESET} could not load ${test_file}"
+    if [[ -n ${SHEST_RESULTS_FILE:-} ]]; then
+      echo "0 1 0 0" >>"$SHEST_RESULTS_FILE"
+    fi
+    return "$EXIT_FAILURE"
+  fi
   # shellcheck disable=SC1090
   source "$test_file"
 
   local failed="$INITIAL_FAILURE_COUNT"
   local passed=0
   local skipped=0
+  local todo=0
   local has_only=false
   local index
   local output
@@ -348,6 +541,15 @@ run_tests() {
   local test_started='' seconds='0.000' timing_label=''
 
   for index in "${!TEST_NAMES[@]}"; do
+    if [[ ${TEST_MODES[$index]} == todo ]]; then
+      echo "${C_CYAN}✎${C_RESET} ${C_DIM}${TEST_NAMES[$index]} (todo)${C_RESET}"
+      if [[ -n ${SHEST_EVENTS_FILE:-} ]]; then
+        record_event "$test_file" todo 0.000 "${TEST_NAMES[$index]}" ''
+      fi
+      todo=$((todo + 1))
+      continue
+    fi
+
     if is_skipped "$index" "$has_only"; then
       echo "${C_YELLOW}○${C_RESET} ${C_DIM}${TEST_NAMES[$index]} (skipped)${C_RESET}"
       if [[ -n ${SHEST_EVENTS_FILE:-} ]]; then
@@ -361,13 +563,9 @@ run_tests() {
       test_started="$(now)"
     fi
 
-    output="$( (
-      set -e
-      trap after_each EXIT
-      before_each
-      "${TEST_FUNCTIONS[$index]}"
-    ) 2>&1)"
-    status=$?
+    execute_test "$index"
+    output="$TEST_OUTPUT"
+    status="$TEST_STATUS"
 
     timing_label=''
     if [[ $measure == true ]]; then
@@ -403,10 +601,10 @@ run_tests() {
   fi
 
   if [[ -n ${SHEST_RESULTS_FILE:-} ]]; then
-    echo "$passed $failed $skipped" >>"$SHEST_RESULTS_FILE"
+    echo "$passed $failed $skipped $todo" >>"$SHEST_RESULTS_FILE"
   else
     echo
-    print_summary "${#TEST_NAMES[@]}" "$passed" "$failed" "$skipped"
+    print_summary "${#TEST_NAMES[@]}" "$passed" "$failed" "$skipped" "$todo"
   fi
 
   [[ $failed -eq $INITIAL_FAILURE_COUNT ]]
@@ -591,6 +789,92 @@ print_coverage_table() {
   printf '%sCoverage%s: %s%s%%%s (%s/%s lines)\n' "$C_BOLD" "$C_RESET" "$(percent_color "$total_covered" "$total_lines")" "$(format_percent "$total_covered" "$total_lines")" "$C_RESET" "$total_covered" "$total_lines"
 }
 
+# True when <name> is one of COVERAGE_REPORTERS.
+has_coverage_reporter() {
+  local reporter
+
+  for reporter in "${COVERAGE_REPORTERS[@]}"; do
+    if [[ $reporter == "$1" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Escape a value for an XML attribute.
+xml_escape() {
+  local value="$1"
+
+  value="${value//&/&amp;}"
+  value="${value//</&lt;}"
+  value="${value//>/&gt;}"
+  value="${value//\"/&quot;}"
+  printf '%s' "$value"
+}
+
+# lcov record of one file: lcov_record <absolute path> <"line hit" rows>
+lcov_record() {
+  local path="$1"
+  local detail="$2"
+  local line hit found=0 hits=0
+
+  printf 'TN:\nSF:%s\n' "$path"
+  while read -r line hit; do
+    if [[ -z $line ]]; then
+      continue
+    fi
+    printf 'DA:%s,%s\n' "$line" "$hit"
+    found=$((found + 1))
+    hits=$((hits + hit))
+  done <<<"$detail"
+  printf 'LF:%s\nLH:%s\nend_of_record\n' "$found" "$hits"
+}
+
+# Cobertura <class> of one file: cobertura_class <relative path> <"line hit" rows> <lines> <covered>
+cobertura_class() {
+  local path="$1"
+  local detail="$2"
+  local line hit
+
+  printf '        <class name="%s" filename="%s" line-rate="%s" branch-rate="0" complexity="0">\n          <methods/>\n          <lines>\n' \
+    "$(xml_escape "$path")" "$(xml_escape "$path")" "$(rate "$4" "$3")"
+  while read -r line hit; do
+    if [[ -z $line ]]; then
+      continue
+    fi
+    printf '            <line number="%s" hits="%s" branch="false"/>\n' "$line" "$hit"
+  done <<<"$detail"
+  printf '          </lines>\n        </class>\n'
+}
+
+# Fraction with 4 decimals: rate <covered> <total>
+rate() {
+  awk -v c="$1" -v t="$2" 'BEGIN { printf "%.4f", (t > 0 ? c / t : 1) }'
+}
+
+# Write the lcov / cobertura files requested in COVERAGE_REPORTERS.
+write_coverage_files() {
+  local lcov="$1" classes="$2" total_lines="$3" total_covered="$4"
+
+  mkdir -p "$COVERAGE_DIRECTORY"
+  if has_coverage_reporter lcov; then
+    printf '%s' "$lcov" >"${COVERAGE_DIRECTORY}/lcov.info"
+    echo "${C_DIM}lcov report written to ${COVERAGE_DIRECTORY}/lcov.info${C_RESET}"
+  fi
+  if has_coverage_reporter cobertura; then
+    {
+      printf '<?xml version="1.0" encoding="UTF-8"?>\n'
+      printf '<coverage line-rate="%s" branch-rate="0" lines-covered="%s" lines-valid="%s" branches-covered="0" branches-valid="0" complexity="0" version="shest %s" timestamp="%s">\n' \
+        "$(rate "$total_covered" "$total_lines")" "$total_covered" "$total_lines" "$SHEST_VERSION" "$(date +%s)000"
+      printf '  <sources>\n    <source>%s</source>\n  </sources>\n' "$(xml_escape "$PWD")"
+      printf '  <packages>\n    <package name="." line-rate="%s" branch-rate="0" complexity="0">\n      <classes>\n' "$(rate "$total_covered" "$total_lines")"
+      printf '%s' "$classes"
+      printf '      </classes>\n    </package>\n  </packages>\n</coverage>\n'
+    } >"${COVERAGE_DIRECTORY}/cobertura-coverage.xml"
+    echo "${C_DIM}cobertura report written to ${COVERAGE_DIRECTORY}/cobertura-coverage.xml${C_RESET}"
+  fi
+}
+
 # Print the coverage table for the hits in <hits_file>; fails when below the threshold.
 report_coverage() {
   local hits_file="$1"
@@ -602,6 +886,7 @@ report_coverage() {
   local total_lines=0 total_covered=0
   local lines covered ranges percent
   local rows=''
+  local detail lcov='' classes=''
 
   while IFS= read -r raw; do
     absolute="$(absolute_path "$raw")"
@@ -621,6 +906,11 @@ report_coverage() {
       percent=$((covered * 100 / lines))
     fi
     rows+="${absolute#"$PWD"/}|${lines}|${covered}|${percent}|${ranges}"$'\n'
+    if has_coverage_reporter lcov || has_coverage_reporter cobertura; then
+      detail="$(awk -v detail=1 "$COVERAGE_AWK_PROGRAM" "$file_hits" "$absolute")"
+      lcov+="$(lcov_record "$absolute" "$detail")"$'\n'
+      classes+="$(cobertura_class "${absolute#"$PWD"/}" "$detail" "$lines" "$covered")"$'\n'
+    fi
   done < <(sed 's/:[0-9]*$//' "$normalized_file" | sort -u)
 
   rm -f "$normalized_file" "$file_hits"
@@ -630,12 +920,12 @@ report_coverage() {
     return "$EXIT_SUCCESS"
   fi
 
-  print_coverage_table "$rows" "$total_lines" "$total_covered"
-
-  local total_percent=100
-  if [[ $total_lines -gt 0 ]]; then
-    total_percent=$((total_covered * 100 / total_lines))
+  if has_coverage_reporter text; then
+    print_coverage_table "$rows" "$total_lines" "$total_covered"
+  else
+    printf '%sCoverage%s: %s%s%%%s (%s/%s lines)\n' "$C_BOLD" "$C_RESET" "$(percent_color "$total_covered" "$total_lines")" "$(format_percent "$total_covered" "$total_lines")" "$C_RESET" "$total_covered" "$total_lines"
   fi
+  write_coverage_files "$lcov" "$classes" "$total_lines" "$total_covered"
 
   if [[ -n $COVERAGE_THRESHOLD && $((total_covered * 100)) -lt $((COVERAGE_THRESHOLD * total_lines)) ]]; then
     echo "${C_RED}Coverage $(format_percent "$total_covered" "$total_lines")% is below the threshold of ${COVERAGE_THRESHOLD}%${C_RESET}" >&2
@@ -701,6 +991,7 @@ END {
     gsub(/#/, "\\#", label)
     if (status[i] == "pass") { pass++; printf "ok %d - %s\n", i, label }
     else if (status[i] == "skip") { skip++; printf "ok %d - %s # SKIP\n", i, label }
+    else if (status[i] == "todo") { todo++; printf "not ok %d - %s # TODO\n", i, label }
     else {
       fail++
       printf "not ok %d - %s\n", i, label
@@ -716,6 +1007,7 @@ END {
   print "# pass " pass + 0
   print "# fail " fail + 0
   print "# skip " skip + 0
+  print "# todo " todo + 0
 }
 '
 
@@ -736,7 +1028,7 @@ END {
     time[file[i]] += seconds[i]
     total_time += seconds[i]
     if (status[i] == "fail") { failures[file[i]]++; total_failures++ }
-    if (status[i] == "skip") { skipped[file[i]]++; total_skipped++ }
+    if (status[i] == "skip" || status[i] == "todo") { skipped[file[i]]++; total_skipped++ }
   }
   print "<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
   printf "<testsuites name=\"shest\" tests=\"%d\" failures=\"%d\" skipped=\"%d\" time=\"%.3f\">\n", n, total_failures, total_skipped, total_time
@@ -748,6 +1040,7 @@ END {
       printf "    <testcase classname=\"%s\" name=\"%s\" time=\"%.3f\"", xml(current), xml(name[i]), seconds[i]
       if (status[i] == "pass") { print "/>" }
       else if (status[i] == "skip") { print ">"; print "      <skipped/>"; print "    </testcase>" }
+      else if (status[i] == "todo") { print ">"; print "      <skipped message=\"todo\"/>"; print "    </testcase>" }
       else {
         split(output[i], lines, "\n")
         print ">"
@@ -819,6 +1112,14 @@ usage() {
   help_row "-t, --filter <regex>" "Only tests whose name matches"
   help_row "    --coverage" "Report line coverage"
   help_row "    --coverage-threshold <n>" "Fail under n% (implies coverage)"
+  help_row "    --coverage-reporters <l>" "text, lcov, cobertura (comma list)"
+  help_row "    --coverage-directory <d>" "Where lcov/cobertura files go"
+  help_row "    --parallel <n>" "Run up to n files at once"
+  help_row "    --timeout <seconds>" "Kill tests that run longer"
+  help_row "    --changed" "Only tests affected by git changes"
+  help_row "    --list" "List tests without running them"
+  help_row "    --watch" "Re-run when .sh files change"
+  help_row "    --init" "Create shest.config.sh"
   help_row "    --bail" "Stop after the first failing file"
   help_row "    --timing" "Show the time of each test"
   help_row "    --reporter <name>" "default, tap or junit"
@@ -832,6 +1133,8 @@ usage() {
   help_row "# @test <name>" "Declare a test"
   help_row "# @test.skip <name>" "Skip the test"
   help_row "# @test.only <name>" "Run only the .only tests"
+  help_row "# @test.todo <name>" "Placeholder, no function needed"
+  help_row "# @timeout <seconds>" "Per-test timeout"
   section_close
 
   section_open "Examples" "$C_CYAN"
@@ -870,11 +1173,87 @@ resolve_pattern() {
   done
 }
 
+# Run one test file in a child process. Uses coverage_file and results_file
+# from run_files (bash locals are visible to the functions it calls).
+run_file_child() {
+  local color=''
+
+  if [[ $PARALLEL -gt 1 && -n $C_RESET ]]; then
+    color=1
+  fi
+  SHEST_FORCE_COLOR="$color" SHEST_TIMING="$TIMING" SHEST_TEST_TIMEOUT="$TEST_TIMEOUT" SHEST_EVENTS_FILE="$2" SHEST_COVERAGE_FILE="$coverage_file" SHEST_RESULTS_FILE="$results_file" \
+    bash "$SHEST_SELF" --run-file "$1" --filter "$NAME_FILTER"
+}
+
+# Run the files with up to PARALLEL child processes at once. A new file starts
+# as soon as any slot frees up. Each file's output is captured and printed in
+# order, so it never interleaves. Updates the counters of run_files.
+run_files_parallel() {
+  local files=("$@")
+  local count=$#
+  local dir
+  dir="$(mktemp -d)"
+  local started=0 finished=0 running=0 stop=false progressed index
+  # Per-file event files are only needed when a reporter is collecting events.
+  local job_events="$events_file"
+
+  while true; do
+    progressed=false
+
+    # Print finished files, in order. The status file is written last.
+    while [[ $finished -lt $started && -f "${dir}/status.${finished}" ]]; do
+      total_files=$((total_files + 1))
+      rule "${files[$finished]}"
+      cat "${dir}/out.${finished}"
+      if [[ -n $events_file && -f "${dir}/events.${finished}" ]]; then
+        cat "${dir}/events.${finished}" >>"$events_file"
+      fi
+      if [[ "$(cat "${dir}/status.${finished}")" != 0 ]]; then
+        failed_files=$((failed_files + 1))
+        if [[ $BAIL == true ]]; then
+          stop=true
+        fi
+      fi
+      echo
+      finished=$((finished + 1))
+      progressed=true
+    done
+
+    running=0
+    for ((index = finished; index < started; index++)); do
+      if [[ ! -f "${dir}/status.${index}" ]]; then
+        running=$((running + 1))
+      fi
+    done
+
+    while [[ $started -lt $count && $running -lt $PARALLEL && $stop == false ]]; do
+      (
+        run_file_child "${files[$started]}" "${job_events:+${dir}/events.${started}}" >"${dir}/out.${started}" 2>&1
+        echo $? >"${dir}/status.${started}"
+      ) &
+      started=$((started + 1))
+      running=$((running + 1))
+      progressed=true
+    done
+
+    if [[ $finished -ge $started ]]; then
+      break
+    fi
+    if [[ $progressed == false ]]; then
+      sleep 0.05
+    fi
+  done
+
+  wait
+  skipped_files=$((count - started))
+  rm -rf "$dir"
+}
+
 run_files() {
   local test_file
   local total_files=0 failed_files=0 skipped_files=0
-  local passed=0 failed=0 skipped=0
-  local file_passed file_failed file_skipped
+  local passed=0 failed=0 skipped=0 todo=0
+  local file_passed file_failed file_skipped file_todo
   local results_file
   results_file="$(mktemp)"
   local started_at
@@ -898,25 +1277,30 @@ run_files() {
     exec 3>&1 1>/dev/null
   fi
 
-  for test_file in "$@"; do
-    total_files=$((total_files + 1))
-    rule "$test_file"
+  if [[ $PARALLEL -gt 1 ]]; then
+    run_files_parallel "$@"
+  else
+    for test_file in "$@"; do
+      total_files=$((total_files + 1))
+      rule "$test_file"
 
-    if ! SHEST_TIMING="$TIMING" SHEST_EVENTS_FILE="$events_file" SHEST_COVERAGE_FILE="$coverage_file" SHEST_RESULTS_FILE="$results_file" bash "$SHEST_SELF" --run-file "$test_file" --filter "$NAME_FILTER"; then
-      failed_files=$((failed_files + 1))
-      if [[ $BAIL == true ]]; then
-        skipped_files=$(($# - total_files))
-        echo
-        break
+      if ! run_file_child "$test_file" "$events_file"; then
+        failed_files=$((failed_files + 1))
+        if [[ $BAIL == true ]]; then
+          skipped_files=$(($# - total_files))
+          echo
+          break
+        fi
       fi
-    fi
-    echo
-  done
+      echo
+    done
+  fi
 
-  while read -r file_passed file_failed file_skipped; do
+  while read -r file_passed file_failed file_skipped file_todo; do
     passed=$((passed + file_passed))
     failed=$((failed + file_failed))
     skipped=$((skipped + file_skipped))
+    todo=$((todo + file_todo))
   done <"$results_file"
   rm -f "$results_file"
 
@@ -929,7 +1313,7 @@ run_files() {
 
   rule
   echo "${C_BOLD}Test Files:${C_RESET}  $(format_counts "$total_files" "$((total_files - failed_files))" "$failed_files" 0)"
-  print_summary "$((passed + failed + skipped))" "$passed" "$failed" "$skipped"
+  print_summary "$((passed + failed + skipped + todo))" "$passed" "$failed" "$skipped" "$todo"
   echo "${C_BOLD}Time:${C_RESET}        ${C_YELLOW}$(elapsed_since "$started_at")s${C_RESET}"
   if [[ $skipped_files -gt 0 ]]; then
     echo
@@ -952,6 +1336,223 @@ run_files() {
   [[ $failed_files -eq 0 && $coverage_status -eq $EXIT_SUCCESS ]]
 }
 
+# Check the settings that can come from either the config file or the command line.
+validate_settings() {
+  local reporter
+
+  if [[ ! $PARALLEL =~ ^[1-9][0-9]*$ ]]; then
+    echo "shest: PARALLEL must be a positive integer, got: ${PARALLEL}" >&2
+    return "$EXIT_FAILURE"
+  fi
+  if [[ ! $TEST_TIMEOUT =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "shest: TEST_TIMEOUT must be a number of seconds, got: ${TEST_TIMEOUT}" >&2
+    return "$EXIT_FAILURE"
+  fi
+  for reporter in "${COVERAGE_REPORTERS[@]}"; do
+    case "$reporter" in
+      text) ;;
+      lcov | cobertura) COVERAGE=true ;;
+      *)
+        echo "shest: unknown coverage reporter: ${reporter} (use text, lcov or cobertura)" >&2
+        return "$EXIT_FAILURE"
+        ;;
+    esac
+  done
+}
+
+# Print every file git reports as modified, staged or untracked (absolute paths).
+changed_files() {
+  local root
+
+  if ! root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+    echo "shest: --changed needs a git repository" >&2
+    return "$EXIT_FAILURE"
+  fi
+  {
+    git -C "$root" diff --name-only HEAD 2>/dev/null
+    git -C "$root" ls-files --others --exclude-standard
+  } | sort -u | while IFS= read -r file; do
+    echo "${root}/${file}"
+  done
+}
+
+# Keep only the test files that changed or that mention a changed file by name.
+select_changed_tests() {
+  local changed test_file changed_file physical
+  changed="$(changed_files)" || return "$EXIT_FAILURE"
+
+  for test_file in "$@"; do
+    # git prints real paths, so compare against the physical path of the file.
+    physical="$(cd "$(dirname "$test_file")" && pwd -P)/$(basename "$test_file")"
+    if grep -qxF -- "$physical" <<<"$changed"; then
+      echo "$test_file"
+      continue
+    fi
+    while IFS= read -r changed_file; do
+      if [[ -n $changed_file && $changed_file != *.test.sh && -f $changed_file ]] && grep -qF -- "$(basename "$changed_file")" "$test_file"; then
+        echo "$test_file"
+        break
+      fi
+    done <<<"$changed"
+  done
+}
+
+# Print the tests of every file without running them.
+list_tests() {
+  local test_file
+  local total=0 run=0 skipped=0 todo=0 only=0
+  local index mode name timeout has_only
+
+  for test_file in "$@"; do
+    rule "$test_file"
+    TEST_NAMES=() TEST_FUNCTIONS=() TEST_MODES=() TEST_TIMEOUTS=()
+    discover_tests "$test_file" || return "$EXIT_FAILURE"
+    has_only=false
+    for mode in "${TEST_MODES[@]}"; do
+      if [[ $mode == only ]]; then
+        has_only=true
+      fi
+    done
+    for index in "${!TEST_NAMES[@]}"; do
+      name="${TEST_NAMES[$index]}"
+      mode="${TEST_MODES[$index]}"
+      timeout="${TEST_TIMEOUTS[$index]}"
+      if [[ -n $NAME_FILTER && ! $name =~ $NAME_FILTER ]]; then
+        continue
+      fi
+      total=$((total + 1))
+      # With an .only test in the file, the plain tests do not run.
+      if [[ $mode == run && $has_only == true ]]; then
+        mode=skip
+      fi
+      case "$mode" in
+        skip)
+          skipped=$((skipped + 1))
+          printf '%s○%s %s%s (skip)%s' "$C_YELLOW" "$C_RESET" "$C_DIM" "$name" "$C_RESET"
+          ;;
+        todo)
+          todo=$((todo + 1))
+          printf '%s✎%s %s%s (todo)%s' "$C_CYAN" "$C_RESET" "$C_DIM" "$name" "$C_RESET"
+          ;;
+        only)
+          only=$((only + 1))
+          printf '%s▶%s %s %s(only)%s' "$C_BLUE" "$C_RESET" "$name" "$C_BLUE" "$C_RESET"
+          ;;
+        *)
+          run=$((run + 1))
+          printf '%s•%s %s' "$C_GREEN" "$C_RESET" "$name"
+          ;;
+      esac
+      if [[ -n $timeout ]]; then
+        printf ' %s(timeout %ss)%s' "$C_DIM" "$timeout" "$C_RESET"
+      fi
+      echo
+    done
+    echo
+  done
+
+  rule
+  echo "${C_BOLD}Test Files:${C_RESET}  $#"
+  echo "${C_BOLD}Tests:${C_RESET}       $(format_list_counts "$total" "$run" "$only" "$skipped" "$todo")"
+}
+
+# "1 skipped, 2 todo, 1 only, 8 to run, 12 total" (zero counts are omitted).
+format_list_counts() {
+  local total="$1" run="$2" only="$3" skipped="$4" todo="$5"
+  local parts=()
+
+  if [[ $skipped -gt 0 ]]; then
+    parts+=("${C_YELLOW}${skipped} skipped${C_RESET}")
+  fi
+  if [[ $todo -gt 0 ]]; then
+    parts+=("${C_CYAN}${todo} todo${C_RESET}")
+  fi
+  if [[ $only -gt 0 ]]; then
+    parts+=("${C_BLUE}${only} only${C_RESET}")
+  fi
+  parts+=("${C_GREEN}$((run + only)) to run${C_RESET}")
+  parts+=("${total} total")
+
+  local out="${parts[0]}" part
+  for part in "${parts[@]:1}"; do
+    out+=", ${part}"
+  done
+  echo "$out"
+}
+
+# Create shest.config.sh in the current directory.
+init_config() {
+  if [[ -e shest.config.sh ]]; then
+    echo "shest: shest.config.sh already exists" >&2
+    return "$EXIT_FAILURE"
+  fi
+  cat >shest.config.sh <<'EOF'
+# shest configuration. Plain bash, sourced before the command line is parsed,
+# so command-line options always win. Every setting is optional; the values
+# below are the defaults.
+#
+# Path patterns are literal substrings of the file path (like Jest's
+# testPathIgnorePatterns), not globs.
+
+# Where to look when no path is given. Directories and globs; "**" matches any depth.
+# TEST_MATCH=("tests/**/*.test.sh")
+
+# Test files whose path contains any of these are skipped.
+# TEST_PATH_IGNORE_PATTERNS=("/build/" "/dist/" "/node_modules/")
+
+# Print a coverage report. A threshold (integer percentage) makes the run fail below it.
+# COVERAGE=true
+# COVERAGE_THRESHOLD=80
+# COVERAGE_PATH_IGNORE_PATTERNS=("/vendor/")
+
+# Coverage output: text (console table), lcov and cobertura (files in COVERAGE_DIRECTORY).
+# COVERAGE_REPORTERS=(text lcov)
+# COVERAGE_DIRECTORY=coverage
+
+# Stop after the first failing file.
+# BAIL=true
+
+# Run up to this many test files at the same time.
+# PARALLEL=4
+
+# Kill any test that runs longer than this many seconds (0 = no limit).
+# A "# @timeout <seconds>" line above a test overrides it.
+# TEST_TIMEOUT=30
+
+# Print how long each test took.
+# TIMING=true
+
+# default, tap or junit; OUTPUT_FILE writes the report to a file instead of stdout.
+# REPORTER=junit
+# OUTPUT_FILE=report.xml
+
+# Only run tests whose name matches this regex.
+# NAME_FILTER=''
+EOF
+  echo "Created shest.config.sh"
+}
+
+# Run shest again every time a .sh file changes: watch_loop <shest args>
+watch_loop() {
+  local marker
+  marker="$(mktemp)"
+  trap 'rm -f "$marker"; exit 0' INT TERM
+
+  while true; do
+    if [[ -t 1 ]]; then
+      printf '\033[2J\033[H'
+    fi
+    # The marker is touched before the run, so edits made during it trigger another one.
+    touch "$marker"
+    bash "$SHEST_SELF" "$@" || true
+    echo
+    echo "${C_DIM}Watching for changes... press Ctrl-C to quit.${C_RESET}"
+    while [[ -z "$(find . -type f -name '*.sh' -not -path './.git/*' -newer "$marker" 2>/dev/null | head -n 1)" ]]; do
+      sleep 1
+    done
+  done
+}
+
 main() {
   local patterns=()
   local run_file=''
@@ -962,6 +1563,7 @@ main() {
   local arg
   local is_child=false
   local previous=''
+  local original_args=("$@")
 
   # Config comes first so command-line options override it.
   for arg in "$@"; do
@@ -998,6 +1600,38 @@ main() {
         ;;
       --coverage)
         COVERAGE=true
+        shift
+        ;;
+      --coverage-reporters)
+        IFS=',' read -r -a COVERAGE_REPORTERS <<<"${2:-}"
+        shift 2 || break
+        ;;
+      --coverage-directory)
+        COVERAGE_DIRECTORY="${2:-}"
+        shift 2 || break
+        ;;
+      --parallel)
+        PARALLEL="${2:-}"
+        shift 2 || break
+        ;;
+      --timeout)
+        TEST_TIMEOUT="${2:-}"
+        shift 2 || break
+        ;;
+      --changed)
+        CHANGED=true
+        shift
+        ;;
+      --list)
+        LIST=true
+        shift
+        ;;
+      --watch)
+        WATCH=true
+        shift
+        ;;
+      --init)
+        INIT=true
         shift
         ;;
       --bail)
@@ -1056,6 +1690,24 @@ main() {
     return
   fi
 
+  if [[ $INIT == true ]]; then
+    init_config
+    return
+  fi
+
+  validate_settings || return "$EXIT_FAILURE"
+
+  if [[ $WATCH == true ]]; then
+    local watch_args=()
+    for arg in "${original_args[@]}"; do
+      if [[ $arg != --watch ]]; then
+        watch_args+=("$arg")
+      fi
+    done
+    watch_loop "${watch_args[@]}"
+    return
+  fi
+
   if [[ ${#patterns[@]} -eq 0 && ${#TEST_MATCH[@]} -gt 0 ]]; then
     patterns=("${TEST_MATCH[@]}")
   fi
@@ -1074,6 +1726,24 @@ main() {
   if [[ ${#files[@]} -eq 0 ]]; then
     echo "shest: no test files found for: ${patterns[*]}" >&2
     return "$EXIT_FAILURE"
+  fi
+
+  if [[ $CHANGED == true ]]; then
+    changed_files >/dev/null || return "$EXIT_FAILURE"
+    local selected=()
+    while IFS= read -r test_file; do
+      selected+=("$test_file")
+    done < <(select_changed_tests "${files[@]}")
+    if [[ ${#selected[@]} -eq 0 ]]; then
+      echo "shest: no test files are affected by the changed files"
+      return "$EXIT_SUCCESS"
+    fi
+    files=("${selected[@]}")
+  fi
+
+  if [[ $LIST == true ]]; then
+    list_tests "${files[@]}"
+    return
   fi
 
   run_files "${files[@]}"

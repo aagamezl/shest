@@ -15,17 +15,21 @@ test_adds() {
 - `expect <actual> <matcher> [expected]` assertions with numeric, boolean, regex and list matchers
 - `before_all`, `after_all`, `before_each`, `after_each` hooks
 - Run one file, many files, a directory or a recursive glob (`tests/**/*.test.sh`)
-- Skip tests (`@test.skip`), focus tests (`@test.only`) or filter by name (`--filter`)
-- Line coverage report with an optional failing threshold (`--coverage`)
+- Skip tests (`@test.skip`), focus tests (`@test.only`), plan tests (`@test.todo`) or filter by name (`--filter`)
+- Per-test timeouts (`# @timeout`) so a hung test cannot block the run
+- Run files in parallel (`--parallel`), re-run on changes (`--watch`) or only the tests affected by git changes (`--changed`)
+- `--list` shows the discovered tests without running them
+- Line coverage with a Jest-style table, an optional failing threshold, and `lcov` / Cobertura files
 - Stop at the first failing file (`--bail`) and per-test timing (`--timing`)
 - TAP and JUnit XML reports for CI (`--reporter`)
+- A `shest.config.sh` config file (`shest --init` creates one)
 - Total run time, colored output, and a non-zero exit code on failure (CI friendly)
 - Works on macOS bash 3.2 as well as bash 4/5
 - One-line installer, upgrade and uninstall
 
 ## Installation
 
-### One-line installer
+### One-line Installer
 
 ```bash
 sh -c "$(curl -fsSL https://raw.githubusercontent.com/aagamezl/shest/master/bin/install.sh)"
@@ -40,8 +44,8 @@ curl -fsSL https://raw.githubusercontent.com/aagamezl/shest/master/bin/install.s
 The installer:
 
 1. Downloads the repository (`curl` and `tar` are required).
-2. Copies `shest.sh` and `utils/` into `~/.shest`.
-3. Links `~/.local/bin/shest` to `~/.shest/shest.sh`, so you can run `shest` from anywhere.
+2. Copies `shest` and `utils/` into `~/.shest`.
+3. Links `~/.local/bin/shest` to `~/.shest/shest`, so you can run `shest` from anywhere.
 4. Warns you if `~/.local/bin` is not in your `PATH`, with the line to add to your shell profile.
 
 Running it again upgrades shest (it asks first unless you pass `--yes`) or tells you that you already have the latest version.
@@ -73,12 +77,12 @@ sh -c "$(curl -fsSL https://raw.githubusercontent.com/aagamezl/shest/master/bin/
 
 ```bash
 git clone https://github.com/aagamezl/shest.git
-./shest/shest.sh --help
+./shest/shest --help
 ```
 
-`shest.sh` loads `utils/colors.sh` from its own directory, so keep the two together. A symlink to `shest.sh` works, since `shest` resolves it to find its files.
+`shest` loads `utils/colors.sh` (and `utils/ui/box-ui.sh` for `--help`) from its own directory, so keep `shest` and `utils/` together. A symlink to `shest` works, since `shest` resolves it to find its files.
 
-The examples below call `shest.sh`. If you installed with the installer, use `shest` instead.
+The examples below call `shest`. If you installed with the installer, use `shest` instead.
 
 ## Quick Start
 
@@ -109,7 +113,7 @@ test_not_equal() {
 Run it:
 
 ```bash
-./shest.sh --file sum.test.sh
+shest --file sum.test.sh
 ```
 
 ```text
@@ -118,8 +122,8 @@ Run it:
 ✓ adds 1 + 3 to not be equal 3
 
 ────────────────────────────────────────────────────────────────────
-Test Files:  1 total, 1 passed, 0 failed
-Tests:       2 total, 2 passed, 0 failed, 0 skipped
+Test Files:  1 passed, 1 total
+Tests:       2 passed, 2 total
 Time:        0.05s
 ```
 
@@ -151,7 +155,7 @@ function_name() {
 | ----------- | ------------------------------------------------------------------------------- |
 | `#`         | starts the comment (spaces after it are optional: `#@test` and `#  @test` work) |
 | `@test`     | marks the next function as a test                                               |
-| `.modifier` | optional: `.skip` or `.only` (see below)                                        |
+| `.modifier` | optional: `.skip`, `.only` or `.todo` (see below)                               |
 | `<name>`    | the display name for the report: free text, spaces and symbols allowed          |
 
 | Decorator             | Effect                                                              |
@@ -159,10 +163,12 @@ function_name() {
 | `# @test <name>`      | register the next function as a test                                |
 | `# @test.skip <name>` | register it but do not run it (reported as skipped)                 |
 | `# @test.only <name>` | run only the `.only` tests of this file; the others are skipped     |
+| `# @test.todo <name>` | a planned test: listed as todo, needs no function                   |
+| `# @timeout <seconds>`| kill the test when it runs longer (see [Timeouts](#timeouts))       |
 
 Rules:
 
-- The decorator must be **immediately followed by the function declaration**: no blank line, comment or other code in between. Otherwise `shest` stops with an error pointing at the file and line.
+- The decorator must be **immediately followed by the function declaration**: no blank line, comment or other code in between, except a `# @timeout` line. Otherwise `shest` stops with an error pointing at the file and line. `.todo` is the exception: it needs no function.
 - The function name is up to you (`test_adds`, `adds`, ...). Only the decorator text is used as the name in the report. Use unique function names, because the last definition of a name wins.
 - A function without a decorator is a normal helper and never runs as a test.
 - The lifecycle hooks (`before_all`, `after_all`, `before_each`, `after_each`) are **not** decorators. They are recognized by their function names. See [Hooks](#hooks).
@@ -211,7 +217,7 @@ after_all() {
 
 `before_all` and `after_all` are skipped when no test in the file runs (for example when everything is skipped).
 
-### Skipping and focusing
+### Skipping And Focusing
 
 ```bash
 # @test.skip not ready yet
@@ -228,6 +234,38 @@ test_focused() {
 - `# @test.skip` marks a test as skipped. It is printed as `○ name (skipped)` and counted in the summary.
 - `# @test.only` runs only the `.only` tests of that file, and the others are skipped.
 - `--filter <regex>` runs only the tests whose name matches the regular expression.
+
+### Todo Tests
+
+`# @test.todo <name>` records a test you plan to write. It needs no function, is printed as `✎ name (todo)`, and is counted separately in the summary. It never fails the run.
+
+```bash
+# @test.todo handles empty input
+# @test.todo reports an error for a negative number
+```
+
+```text
+✎ handles empty input (todo)
+✎ reports an error for a negative number (todo)
+```
+
+In TAP reports a todo is `not ok ... # TODO`, and in JUnit it is a `<skipped message="todo"/>`.
+
+### Timeouts
+
+A test that runs longer than its limit is killed and fails with `Timed out after <n>s`, so a hung test cannot block the run. `after_each` still runs.
+
+```bash
+# @test downloads the file
+# @timeout 10
+test_download() {
+  curl -fsS "$URL" -o out.bin
+}
+```
+
+- `# @timeout <seconds>` goes right above `# @test` or between it and the function. Decimals work (`# @timeout 0.5`).
+- `TEST_TIMEOUT=30` in the [config file](#configuration), or `--timeout 30` on the command line, sets a limit for every test. A `# @timeout` line overrides it, and `0` means no limit.
+- The limit covers `before_each`, the test and `after_each` of that test, not `before_all` / `after_all`.
 
 ## Assertions
 
@@ -246,6 +284,12 @@ Use `expect <actual> <matcher> [expected]`. Matchers print `Expected` / `Receive
 | `to_match`                     | the value matches an extended regex           | `expect "Christoph" to_match 'stop'`                |
 | `to_contain`                   | the value contains a substring                | `expect "milk and bread" to_contain "milk"`         |
 | `to_contain_item`              | a newline-separated list has the exact item   | see below                                           |
+| `to_be_empty`                  | the value is the empty string                 | `expect "$out" to_be_empty`                         |
+| `to_start_with`                | the value starts with a prefix                | `expect "hello world" to_start_with "hello"`        |
+| `to_end_with`                  | the value ends with a suffix                  | `expect "hello world" to_end_with "world"`          |
+| `to_have_length`               | the value has this many characters            | `expect "hello" to_have_length 5`                   |
+| `to_have_count`                | a newline-separated list has this many items  | see below                                           |
+| `to_exit_with`                 | a command line exits with this code           | `expect "grep -q x f.txt" to_exit_with 1`           |
 
 Shell arrays cannot be passed as a single argument, so join them with `printf` for `to_contain_item`. It matches whole items, so `milk` is not found inside `buttermilk`:
 
@@ -253,6 +297,26 @@ Shell arrays cannot be passed as a single argument, so join them with `printf` f
 items=("diapers" "milk" "buttermilk")
 expect "$(printf '%s\n' "${items[@]}")" to_contain_item "milk"
 ```
+
+Use `to_have_count` with the same `printf` trick, and `to_exit_with` to check exit codes:
+
+```bash
+expect "$(printf '%s\n' "${items[@]}")" to_have_count 3
+expect "" to_have_count 0                    # an empty list has 0 items
+expect "false" to_exit_with 1                # the command is run with eval in a subshell, output discarded
+```
+
+### Negating A Matcher
+
+Put `not` before any matcher to invert it, including custom ones:
+
+```bash
+expect "hello" not to_be_empty
+expect "hello" not to_contain "xyz"
+expect 3 not to_be_greater_than 5
+```
+
+On failure it prints `Expected: not to contain xyz` and the received value. `not_to_be` still works too.
 
 ### Custom Matchers
 
@@ -275,7 +339,7 @@ test_even() {
 ## Running Tests
 
 ```text
-shest.sh [options] [path...]
+shest [options] [path...]
 ```
 
 | Option                         | Description                                                              |
@@ -285,6 +349,15 @@ shest.sh [options] [path...]
 | `-t, --filter <regex>`         | Run only tests whose name matches                                        |
 | `--coverage`                   | Print a line coverage report                                             |
 | `--coverage-threshold <n>`     | Fail when total coverage is below `n` percent (implies `--coverage`)     |
+| `--coverage-reporters <list>`  | Comma list of `text`, `lcov`, `cobertura` (see [Code Coverage](#code-coverage)) |
+| `--coverage-directory <dir>`   | Where the `lcov` / `cobertura` files are written (default `coverage`)    |
+| `--parallel <n>`               | Run up to `n` test files at the same time                                |
+| `--timeout <seconds>`          | Kill any test that runs longer than this (see [Timeouts](#timeouts))     |
+| `--changed`                    | Only run tests affected by files changed in git                          |
+| `--list`                       | List the discovered tests without running them                           |
+| `--watch`                      | Re-run when a `.sh` file changes                                         |
+| `--init`                       | Create a commented `shest.config.sh`                                     |
+| `--config <file>`              | Use this config file (default `shest.config.sh`)                         |
 | `--bail`                       | Stop after the first failing file                                        |
 | `--timing`                     | Show how long each test took                                             |
 | `--reporter <name>`            | `default`, `tap` or `junit` (see [Reporters](#reporters))                |
@@ -293,17 +366,76 @@ shest.sh [options] [path...]
 | `-h, --help`                   | Show help                                                                |
 
 ```bash
-shest.sh                                   # every *.test.sh under the current directory
-shest.sh --file sum.test.sh                # one file
-shest.sh --path tests/                     # a directory, recursively
-shest.sh --path 'tests/**/*.test.sh'       # a glob (quote it so shest expands it)
-shest.sh --path a.test.sh b.test.sh        # several paths
-shest.sh -t 'greater' --file matchers.test.sh
+shest                                   # every *.test.sh under the current directory
+shest --file sum.test.sh                # one file
+shest --path tests/                     # a directory, recursively
+shest --path 'tests/**/*.test.sh'       # a glob (quote it so shest expands it)
+shest --path a.test.sh b.test.sh        # several paths
+shest -t 'greater' --file matchers.test.sh
 ```
 
 - Quote globs so shest expands them itself. `**` matches any number of directories on every bash version.
 - Each file runs in its own process, so functions and variables never leak between files.
 - The exit code is `1` when any test or file fails, a coverage threshold is missed, or no test files are found. Otherwise it is `0`.
+
+### Parallel Runs
+
+`--parallel <n>` runs up to `n` test files at once. Files already run in separate processes, so nothing else changes:
+
+```bash
+shest --parallel 4
+```
+
+- Output stays grouped: each file's results are printed in order once it finishes, never interleaved, and colors are kept.
+- Counts, coverage, reports and the exit code are the same as a sequential run.
+- With `--bail`, files that already started finish, and no new ones start after the first failure.
+- It helps when files are slow (waiting on `sleep`, the network or a build). The run can never be faster than the slowest single file, and for files that finish in milliseconds the extra processes bring no gain. For example, six files that each `sleep 1` take 6.3s with `--parallel 1`, 2.3s with `--parallel 3` and 1.2s with `--parallel 6`.
+- Tests that share a file, a port or a database can interfere when run in parallel. Keep it at `1` (the default) for those.
+
+### Listing Tests
+
+`--list` discovers tests without running them or running any hook. It honors paths, ignore patterns, `--filter` and `--changed`:
+
+```bash
+shest --list --path 'tests/**/*.test.sh'
+```
+
+```text
+━━ examples/skipping.test.sh ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• runs normally
+○ fails if it ever runs (skip)
+✎ handles empty input (todo)
+
+━━ examples/only.test.sh ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+○ not run because another test is .only (skip)
+▶ the only one that runs (only)
+
+────────────────────────────────────────────────────────────────────
+Test Files:  2
+Tests:       2 skipped, 1 todo, 1 only, 2 to run, 5 total
+```
+
+Each file gets the same header as a real run. `•` (green) is a test that will run, `○` (yellow) is skipped, `✎` (cyan) is todo, and `▶` (blue) is `.only`. Plain tests in a file that has an `.only` test are shown as skipped, because that is what a run would do. A `(timeout Ns)` note is added to tests with a `# @timeout`. The summary counts skipped, todo, only, how many would run, and the total.
+
+### Changed Files
+
+`--changed` runs only the tests affected by uncommitted work (modified, staged and untracked files, from `git`). A test file is selected when it changed itself or when its text mentions the file name of a changed source file, so a test that `source`s `arithmetic.sh` runs when `arithmetic.sh` changes.
+
+```bash
+shest --changed
+shest --changed --coverage
+```
+
+If nothing is affected it prints `no test files are affected by the changed files` and exits `0`. It needs a git repository.
+
+### Watch Mode
+
+`--watch` runs the tests, then waits and runs them again whenever a `.sh` file under the current directory changes (the screen is cleared between runs on a terminal). Other options are kept, so it combines with filters, `--changed` and coverage. Press Ctrl-C to quit.
+
+```bash
+shest --watch
+shest --watch --changed --filter 'adds'
+```
 
 ### Report
 
@@ -323,13 +455,14 @@ Each file gets a header, failing tests are followed by their details and a blank
     Received: false
 
 ────────────────────────────────────────────────────────────────────
-Test Files:  10 total, 9 passed, 1 failed
-Tests:       41 total, 28 passed, 10 failed, 3 skipped
+Test Files:  1 failed, 9 passed, 10 total
+Tests:       3 skipped, 2 todo, 11 failed, 33 passed, 49 total
 Time:        0.73s
 ```
 
 - `Test Files` counts files. A file fails when any of its tests fail or it cannot be loaded.
-- `Tests` counts individual tests.
+- `Tests` counts individual tests: skipped (yellow), todo (cyan), failed (red) and passed (green), then the total. Zero counts are omitted, except `passed`.
+- The summary is always the last thing printed, after the coverage report.
 - `Time` is the total wall-clock time (sub-second precision with bash 5 or `perl`; whole seconds otherwise).
 
 ### Bail
@@ -337,12 +470,22 @@ Time:        0.73s
 `--bail` stops the run after the first file that fails. The files that were not run are counted and reported:
 
 ```text
-Test Files:  2 total, 1 passed, 1 failed
-Tests:       12 total, 2 passed, 10 failed, 0 skipped
+Test Files:  1 failed, 1 passed, 2 total
+Tests:       10 failed, 2 passed, 12 total
 Time:        0.17s
 
 Bailed after the first failing file: 8 file(s) not run
 ```
+
+### Colors
+
+Output is colored only when stdout is a terminal. Set `NO_COLOR=1` (or use `TERM=dumb`) to turn colors off, for example in CI logs:
+
+```bash
+NO_COLOR=1 shest
+```
+
+Piped or redirected output, and the `tap` / `junit` reports, never contain color codes.
 
 ### Timing
 
@@ -360,9 +503,9 @@ Timing uses sub-second precision with bash 5 or `perl`. On older systems without
 Besides the default console output, `shest` can produce machine-readable reports for CI:
 
 ```bash
-shest.sh --reporter tap --path tests/                          # TAP on stdout
-shest.sh --reporter junit --path tests/ > report.xml           # JUnit XML on stdout
-shest.sh --reporter junit --output-file report.xml --path tests/
+shest --reporter tap --path tests/                          # TAP on stdout
+shest --reporter junit --path tests/ > report.xml           # JUnit XML on stdout
+shest --reporter junit --output-file report.xml --path tests/
 ```
 
 - With `--reporter tap` or `--reporter junit`, the report is the only thing printed on stdout. The exit code is unchanged.
@@ -404,29 +547,51 @@ JUnit:
 ## Code Coverage
 
 ```bash
-shest.sh --path 'examples/**/*.test.sh' --coverage
-shest.sh --file examples/divide.test.sh --coverage-threshold 80
+shest --path 'examples/**/*.test.sh' --coverage
+shest --file examples/divide.test.sh --coverage-threshold 80
 ```
 
 ```text
---------------------------|---------|-------|-------------------
-File                      | % Lines | Lines | Uncovered Line #s
---------------------------|---------|-------|-------------------
-All files                 |   73.68 | 28/38 |
- examples/arithmetic.sh   |   83.33 |   5/6 | 15
- examples/math_utils.sh   |   80.00 | 12/15 | 5,15,21
- examples/string_utils.sh |  100.00 |   9/9 |
- examples/validators.sh   |   25.00 |   2/8 | 12,16-17,20-21,24
---------------------------|---------|-------|-------------------
+┌──────────────────────────┬─────────┬───────┬───────────────────┐
+│ File                     │ % Lines │ Lines │ Uncovered Line #s │
+├──────────────────────────┼─────────┼───────┼───────────────────┤
+│ All files                │   73.68 │ 28/38 │                   │
+│ examples/arithmetic.sh   │   83.33 │   5/6 │ 15                │
+│ examples/math_utils.sh   │   80.00 │ 12/15 │ 5,15,21           │
+│ examples/string_utils.sh │  100.00 │   9/9 │                   │
+│ examples/validators.sh   │   25.00 │   2/8 │ 12,16-17,20-21,24 │
+└──────────────────────────┴─────────┴───────┴───────────────────┘
 
 Coverage: 73.68% (28/38 lines)
 ```
 
 - The table follows the Jest layout: an `All files` row first, then one row per file, with the percentage of covered lines, `covered/total` lines and the uncovered line numbers (consecutive lines are shown as ranges).
 - The total percentage is repeated under the table, and it is what `--coverage-threshold` is checked against.
-- Percentages are colored like Jest: green at 80% or more, yellow at 50% or more, red below.
+- File names and percentages are colored like Jest: green at 80% or more, yellow at 50% or more, red below.
+- `Uncovered Line #s` is colored by how many lines are uncovered in total (not how many groups): yellow for 3 or fewer, red for more. So `12,16-17,20-21,24` is red (6 lines) and `5,15,21` is yellow (3 lines).
 
-- Coverage is **line coverage** of the files your tests `source`. Test files, `shest.sh` and `utils/` are excluded.
+### Coverage Reporters
+
+`--coverage-reporters` (or `COVERAGE_REPORTERS` in the config) picks the outputs, as a comma-separated list:
+
+| Reporter    | Output                                                                  |
+| ----------- | ----------------------------------------------------------------------- |
+| `text`      | the console table above (the default)                                   |
+| `lcov`      | `coverage/lcov.info`, for Codecov, Coveralls, genhtml and editors       |
+| `cobertura` | `coverage/cobertura-coverage.xml`, for GitLab, Jenkins and Azure DevOps |
+
+```bash
+shest --coverage-reporters text,lcov                       # table on screen plus lcov.info
+shest --coverage-reporters lcov,cobertura --coverage-directory build/cov
+shest --coverage-reporters lcov --coverage-threshold 80    # files only, still fails under 80%
+```
+
+- Choosing `lcov` or `cobertura` turns coverage on, so `--coverage` is not needed.
+- Without `text`, the console shows only the `Coverage: 73.68% (28/38 lines)` line, and the threshold still applies.
+- The directory is created when missing (default `coverage`, set with `--coverage-directory` or `COVERAGE_DIRECTORY`).
+- Both formats list each executable line as hit or not hit (`hits` is `1` or `0`, not an execution count). Branch data is not collected, so branch rates are `0`.
+
+- Coverage is **line coverage** of the files your tests `source`. Test files, `shest` and `utils/` are excluded.
 - A `DEBUG` trap records every executed line. Expect noticeably slower runs, so it is opt-in.
 - Executable lines are detected heuristically: blank lines, comments, lone `}`/`fi`/`done`/`else`, function declaration lines, heredoc bodies and multi-line array bodies are not counted, and a command split with `\` counts once. Unusual layouts may be off by a line.
 - A file that no test sources is not listed (it is not reported as 0%).
@@ -451,6 +616,10 @@ BAIL=true
 | `COVERAGE` | `true`/`false` | `false` | Collect and print coverage |
 | `COVERAGE_THRESHOLD` | integer | unset | Fail below this percentage; implies `COVERAGE=true` |
 | `COVERAGE_PATH_IGNORE_PATTERNS` | array | `()` | Source files to leave out of the coverage report |
+| `COVERAGE_REPORTERS` | array | `(text)` | Any of `text`, `lcov`, `cobertura`; the last two turn coverage on |
+| `COVERAGE_DIRECTORY` | path | `coverage` | Where the `lcov` / `cobertura` files are written |
+| `PARALLEL` | integer | `1` | Run up to this many test files at once |
+| `TEST_TIMEOUT` | seconds | `0` | Kill tests that run longer; `0` means no limit |
 | `BAIL` | `true`/`false` | `false` | Stop after the first failing file |
 | `TIMING` | `true`/`false` | `false` | Show the time of each test |
 | `REPORTER` | string | `default` | `default`, `tap` or `junit` |
@@ -492,7 +661,7 @@ TEST_PATH_IGNORE_PATTERNS=("failing")                             # any path con
 
 Ignored files are dropped before anything runs, so they do not count in `Test Files`.
 
-### COVERAGE and COVERAGE_THRESHOLD
+### COVERAGE And COVERAGE_THRESHOLD
 
 ```bash
 COVERAGE=true            # always print the coverage table
@@ -510,14 +679,43 @@ COVERAGE_PATH_IGNORE_PATTERNS=("/vendor/")                 # third-party code
 COVERAGE_PATH_IGNORE_PATTERNS=("/generated/" "_legacy.sh") # a directory and a file suffix
 ```
 
-### BAIL and TIMING
+### COVERAGE_REPORTERS And COVERAGE_DIRECTORY
+
+```bash
+COVERAGE_REPORTERS=(text lcov)              # table on screen plus coverage/lcov.info
+COVERAGE_REPORTERS=(lcov cobertura)         # files only
+COVERAGE_DIRECTORY=build/coverage           # where the files go
+```
+
+Any other value (`html`) stops shest with `unknown coverage reporter`.
+
+### PARALLEL
+
+```bash
+PARALLEL=4                                  # four files at a time
+PARALLEL=1                                  # sequential (the default)
+```
+
+Must be a positive integer. Output order and totals do not change; see [Parallel runs](#parallel-runs).
+
+### TEST_TIMEOUT
+
+```bash
+TEST_TIMEOUT=30                             # every test gets 30 seconds
+TEST_TIMEOUT=0.5                            # decimals are fine
+TEST_TIMEOUT=0                              # no limit (the default)
+```
+
+A `# @timeout` decorator on a test overrides it. See [Timeouts](#timeouts).
+
+### BAIL And TIMING
 
 ```bash
 BAIL=true     # stop at the first failing file; the rest are reported as not run
 TIMING=true   # print the duration after every test name
 ```
 
-### REPORTER and OUTPUT_FILE
+### REPORTER And OUTPUT_FILE
 
 With `tap` or `junit` and no `OUTPUT_FILE`, the report goes to stdout and the human-readable output is hidden. With `OUTPUT_FILE`, the report goes to the file and the normal output stays on screen.
 
@@ -552,13 +750,16 @@ COVERAGE_PATH_IGNORE_PATTERNS=("/vendor/")
 
 if [[ -n ${CI:-} ]]; then
   COVERAGE_THRESHOLD=80
+  COVERAGE_REPORTERS=(text lcov)
+  PARALLEL=4
+  TEST_TIMEOUT=60
   BAIL=true
   REPORTER=junit
   OUTPUT_FILE=reports/junit.xml
 fi
 ```
 
-A commented sample lives in [shest.config.sh](shest.config.sh).
+`shest --init` writes a commented `shest.config.sh` with every setting at its default (it refuses to overwrite an existing file). A sample lives in [shest.config.sh](shest.config.sh).
 
 ## Examples
 
@@ -567,9 +768,9 @@ The [examples](examples) directory contains runnable files:
 | File                                                      | Shows                                          |
 | --------------------------------------------------------- | ---------------------------------------------- |
 | [sum.test.sh](examples/sum.test.sh)                       | basic tests, hooks                             |
-| [matchers.test.sh](examples/matchers.test.sh)             | every matcher, including the failing cases     |
-| [failing.test.sh](examples/failing.test.sh)               | intentionally failing tests, to see the output |
-| [skipping.test.sh](examples/skipping.test.sh)             | `@test.skip`                                   |
+| [matchers.test.sh](examples/matchers.test.sh)             | every matcher, `not`, and `@timeout`           |
+| [failing.test.sh](examples/failing.test.sh)               | intentionally failing tests, including a `@timeout` kill |
+| [skipping.test.sh](examples/skipping.test.sh)             | `@test.skip` and `@test.todo`                  |
 | [only.test.sh](examples/only.test.sh)                     | `@test.only`                                   |
 | [divide.test.sh](examples/divide.test.sh)                 | partial coverage (about 33%)                   |
 | [string_utils.test.sh](examples/string_utils.test.sh)     | a fully covered source file (100%)             |
@@ -581,7 +782,25 @@ The [examples](examples) directory contains runnable files:
 
 ```bash
 make check   # bash -n, shellcheck and shfmt
+make test    # shest's own tests, run by shest (tests/)
 make fmt     # format with shfmt
 ```
 
-ShellCheck settings live in `.shellcheckrc`.
+### Tests
+
+shest tests itself. The files in [tests](tests) run `shest` as a black box against throwaway projects and check its output and exit codes:
+
+| File | Covers |
+| --- | --- |
+| [cli.test.sh](tests/cli.test.sh) | `--version`, `--help`, `--init`, bad options |
+| [runner.test.sh](tests/runner.test.sh) | counting, skip / todo / only, filter, hooks, discovery, bail, isolation |
+| [reporters.test.sh](tests/reporters.test.sh) | TAP, JUnit, `--output-file` |
+| [coverage.test.sh](tests/coverage.test.sh) | the table, thresholds, ignore patterns, lcov and Cobertura |
+| [config.test.sh](tests/config.test.sh) | `shest.config.sh`, overrides, validation |
+| [features.test.sh](tests/features.test.sh) | timeouts, `--parallel`, `--list`, `--changed`, `--watch` |
+
+[helpers.sh](tests/helpers.sh) creates the temporary projects. It writes fixture tests with `printf` rather than heredocs, because shest scans test files for `# @test` lines and a decorator inside a heredoc would be read as a real one.
+
+ShellCheck settings live in `.shellcheckrc`, and `.editorconfig` sets the indentation `shfmt` uses (it also covers the extension-less `shest` script).
+
+shest's own coverage cannot be measured by shest itself: the runner and `utils/` are excluded from coverage reports, so a run of `tests/` only reports on `tests/helpers.sh`.

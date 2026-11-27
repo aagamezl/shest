@@ -31,7 +31,7 @@ HOME="${HOME:-$(eval echo ~"$USER")}"
 
 INSTALL_DIR="${SHEST_INSTALL_DIR:-$HOME/.shest}"
 BIN_DIR="${SHEST_BIN_DIR:-$HOME/.local/bin}"
-SCRIPT_NAME="shest.sh"
+SCRIPT_NAME="shest"
 COMMAND_NAME="shest"
 
 ASSUME_YES=0
@@ -194,7 +194,7 @@ print_success() {
   echo
 }
 
-# Print the SHEST_VERSION declared in a shest.sh file (empty if not found).
+# Print the SHEST_VERSION declared in the shest script (empty if not found).
 read_version() {
   sed -n 's/^readonly SHEST_VERSION="\(.*\)"$/\1/p' "$1" 2>/dev/null | head -n 1
 }
@@ -217,7 +217,7 @@ confirm() {
   esac
 }
 
-# Make SOURCE_DIR point at a directory containing shest.sh and utils/.
+# Make SOURCE_DIR point at a directory containing shest and utils/.
 fetch_source() {
   if [ -n "${SHEST_SOURCE_DIR:-}" ]; then
     SOURCE_DIR="$SHEST_SOURCE_DIR"

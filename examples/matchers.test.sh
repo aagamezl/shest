@@ -74,3 +74,48 @@ test_to_contain_item() {
   expect "$(printf '%s\n' "${items[@]}")" to_contain_item "trash bags"
   expect_failure "$(printf '%s\n' "${items[@]}")" to_contain_item "butter"
 }
+
+# @test to_be_empty, to_start_with, to_end_with
+test_string_matchers() {
+  expect "" to_be_empty
+  expect "hello world" to_start_with "hello"
+  expect "hello world" to_end_with "world"
+  expect_failure "hello" to_be_empty
+  expect_failure "hello world" to_start_with "world"
+  expect_failure "hello world" to_end_with "hello"
+}
+
+# @test to_have_length counts characters, to_have_count counts list items
+test_counting_matchers() {
+  local items=("milk" "bread" "eggs")
+
+  expect "hello" to_have_length 5
+  expect "$(printf '%s\n' "${items[@]}")" to_have_count 3
+  expect "" to_have_count 0
+  expect_failure "hello" to_have_length 4
+  expect_failure "$(printf '%s\n' "${items[@]}")" to_have_count 2
+}
+
+# @test to_exit_with checks the exit code of a command
+test_to_exit_with() {
+  expect "true" to_exit_with 0
+  expect "false" to_exit_with 1
+  expect "exit 7" to_exit_with 7
+  expect_failure "true" to_exit_with 1
+}
+
+# @test not inverts any matcher
+test_not() {
+  expect "hello" not to_be_empty
+  expect "hello" not to_contain "xyz"
+  expect 3 not to_be_greater_than 5
+  expect_failure "hello" not to_contain "ell"
+  expect_failure "" not to_be_empty
+}
+
+# A fast test with a generous timeout passes
+# @test a quick test finishes inside its timeout
+# @timeout 5
+test_within_timeout() {
+  expect "ok" to_be "ok"
+}

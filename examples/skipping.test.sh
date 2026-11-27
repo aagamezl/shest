@@ -14,3 +14,6 @@ test_skipped() {
 test_skipped_too() {
   expect 1 to_be 2
 }
+
+# @test.todo handles empty input
+# @test.todo reports an error for a negative number

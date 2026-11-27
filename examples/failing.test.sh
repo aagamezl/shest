@@ -59,3 +59,9 @@ test_fail_to_be() {
 test_passes() {
   expect 1 to_be_less_than 2
 }
+
+# @test a hanging test is killed by its timeout
+# @timeout 1
+test_fail_timeout() {
+  sleep 5
+}

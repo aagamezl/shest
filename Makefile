@@ -1,8 +1,11 @@
-SHELL_FILES := $(wildcard $(shell git ls-files --cached --others --exclude-standard '*.sh'))
+SHELL_FILES := $(wildcard $(shell git ls-files --cached --others --exclude-standard '*.sh')) shest
 
-.PHONY: check lint syntax fmt fmt-check hooks
+.PHONY: check test lint syntax fmt fmt-check hooks
 
 check: syntax lint fmt-check ## Run all static checks
+
+test: ## Run shest's own tests with shest
+	@./shest tests --parallel 4
 
 syntax: ## bash -n parse check
 	@for f in $(SHELL_FILES); do bash -n "$$f" || exit 1; done

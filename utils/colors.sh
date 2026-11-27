@@ -8,8 +8,9 @@ C_ANSI_YELLOW=$'\033[33m'
 C_ANSI_BLUE=$'\033[34m'
 C_ANSI_CYAN=$'\033[36m'
 
-# Colors for output written to stdout: empty unless stdout is a color tty.
-if [[ -t 1 && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
+# Colors for output written to stdout: empty unless stdout is a color tty
+# (or SHEST_FORCE_COLOR is set, which shest does for parallel child processes).
+if [[ (-t 1 || -n "${SHEST_FORCE_COLOR:-}") && -z "${NO_COLOR:-}" && "${TERM:-}" != "dumb" ]]; then
   C_RESET=$C_ANSI_RESET
   C_BOLD=$C_ANSI_BOLD
   C_DIM=$C_ANSI_DIM
