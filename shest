@@ -395,10 +395,10 @@ rule() {
   local fill
 
   if [[ -n $title ]]; then
-    fill="$(printf '%*s' "$((width - ${#title} - 4))" '' | tr ' ' '━')"
+    fill="$(repeat_char '━' "$((width - ${#title} - 4))")"
     echo "${C_BOLD}${C_DIM}━━${C_RESET} ${C_CYAN}${title}${C_RESET} ${C_DIM}${fill}${C_RESET}"
   else
-    echo "${C_DIM}$(printf '%*s' "$width" '' | tr ' ' '─')${C_RESET}"
+    echo "${C_DIM}$(repeat_char '─' "$width")${C_RESET}"
   fi
 }
 
