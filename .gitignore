@@ -3,6 +3,7 @@ coverage/
 report.xml
 junit.xml
 *.tap
+reports/
 
 # shfmt / editors leave these behind
 *.orig
