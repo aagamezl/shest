@@ -1084,8 +1084,14 @@ emit_report() {
 help_row() {
   local name="$1"
   local description="$2"
-  local width=30
+  local width=29
   local plain colored
+
+  # Never let a row outgrow the box (inner width is WIDTH - 4).
+  local room=$((WIDTH - 4 - width - 1))
+  if ((${#description} > room)); then
+    description="${description:0:room-1}…"
+  fi
 
   plain="$(printf '%-*s %s' "$width" "$name" "$description")"
   colored="$(printf '%s%-*s%s %s' "$C_BOLD" "$width" "$name" "$C_RESET" "$description")"
@@ -1097,7 +1103,7 @@ usage() {
   # its globals (WIDTH, BORDER, ...) out of the test runs.
   # shellcheck source=utils/ui/box-ui.sh
   source "${SHEST_DIR}/utils/ui/box-ui.sh"
-  choose_box_width 68
+  choose_box_width 72
 
   box_banner "shest ${SHEST_VERSION}" "Shell test runner"
 
